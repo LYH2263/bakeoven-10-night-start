@@ -14,9 +14,12 @@ from app.schemas.schemas import (
     WindowOut,
 )
 from app.services.oven_engine import (
+    DAY_CLOSE,
+    DAY_OPEN,
     Occupancy,
     RecipeDurations,
     build_occupancies,
+    clip_to_day,
     find_conflicts,
     next_free_window,
 )
@@ -26,6 +29,15 @@ api_router = APIRouter()
 
 def _recipe(p: Product) -> RecipeDurations:
     return RecipeDurations(p.ferment_min, p.bake_min)
+
+
+def _auto_code(start_min: int) -> str:
+    """Default batch code. Same-day keeps raw minutes (BO-540); a previous-night
+    start uses the previous-day wall clock (start -60 -> BO-2300)."""
+    if start_min >= 0:
+        return f"BO-{start_min}"
+    m = start_min % (24 * 60)
+    return f"BO-{m // 60:02d}{m % 60:02d}"
 
 
 def _all_occupancies(db: Session) -> list[Occupancy]:
@@ -50,11 +62,13 @@ def _batch_out(db: Session, b: Batch) -> BatchOut:
         oven_id=b.oven_id,
         code=b.code,
         start_min=b.start_min,
+        start_day_offset=b.start_day_offset,
         status=b.status,
         product_name=p.name if p else None,
         oven_label=o.label if o else None,
         ferment_end=ferment_end,
         bake_end=bake_end,
+        night_start=b.start_day_offset == -1,
     )
 
 
@@ -86,15 +100,27 @@ def create_batch(body: BatchCreate, db: Session = Depends(get_db)):
     if not product or not oven:
         raise HTTPException(404, "产品或炉位不存在")
     recipe = _recipe(product)
+    # Full intervals (including the previous-night / cross-midnight portion) drive
+    # both the finish-before-open rule and overlap detection.
     candidates = build_occupancies(oven.id, -1, body.start_min, recipe)
+    bake_end = body.start_min + recipe.total
+    code = body.code or _auto_code(body.start_min)
+    # A previous-night batch must still be baking/finish after the doors open.
+    if body.start_day_offset == -1 and bake_end < DAY_OPEN:
+        detail = (
+            f"烘烤结束 {bake_end} 早于当日开门 {DAY_OPEN}，"
+            f"不予排产（夜间发酵需在开门后完成烘烤）"
+        )
+        db.add(ConflictLog(batch_code=code, oven_id=oven.id, detail=detail))
+        db.commit()
+        raise HTTPException(409, detail)
     existing = _all_occupancies(db)
     hits = find_conflicts(existing, candidates)
-    code = body.code or f"BO-{body.start_min}"
     if hits:
         ex, cand = hits[0]
         detail = (
             f"与批次#{ex.batch_id} 的 {ex.phase} 段重叠："
-            f"[{cand.interval.start},{cand.interval.end})"
+            f"[{cand.interval.start},{cand.interval.end})（按完整区间判定）"
         )
         db.add(ConflictLog(batch_code=code, oven_id=oven.id, detail=detail))
         db.commit()
@@ -104,6 +130,7 @@ def create_batch(body: BatchCreate, db: Session = Depends(get_db)):
         oven_id=oven.id,
         code=code,
         start_min=body.start_min,
+        start_day_offset=body.start_day_offset,
     )
     db.add(batch)
     db.commit()
@@ -119,7 +146,13 @@ def gantt(db: Session = Depends(get_db)):
         o = db.get(Oven, b.oven_id)
         if not p or not o:
             continue
+        night = b.start_day_offset == -1
         for occ in build_occupancies(b.oven_id, b.id, b.start_min, _recipe(p)):
+            # Draw only the slice still occupying the day after 00:00; overlap
+            # checks above already used the full, unclipped interval.
+            visible = clip_to_day(occ.interval)
+            if visible is None:
+                continue
             blocks.append(
                 GanttBlock(
                     batch_id=b.id,
@@ -127,8 +160,9 @@ def gantt(db: Session = Depends(get_db)):
                     oven_id=o.id,
                     oven_label=o.label,
                     phase=occ.phase,
-                    start_min=occ.interval.start,
-                    end_min=occ.interval.end,
+                    start_min=visible.start,
+                    end_min=visible.end,
+                    night_start=night,
                 )
             )
     return blocks
@@ -145,10 +179,12 @@ def windows(product_id: int, db: Session = Depends(get_db)):
     if not product:
         raise HTTPException(404, "产品不存在")
     duration = product.ferment_min + product.bake_min
+    # Existing includes previous-night occupancies (negative minutes), so a window
+    # is never offered where a night batch still holds the oven after open.
     existing = _all_occupancies(db)
     out: list[WindowOut] = []
     for oven in db.scalars(select(Oven).order_by(Oven.id)).all():
-        w = next_free_window(existing, oven.id, duration, search_from=8 * 60, search_to=22 * 60)
+        w = next_free_window(existing, oven.id, duration, search_from=DAY_OPEN, search_to=DAY_CLOSE)
         if w:
             out.append(
                 WindowOut(

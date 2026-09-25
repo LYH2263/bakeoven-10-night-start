@@ -27,7 +27,9 @@ class Batch(Base):
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
     oven_id: Mapped[int] = mapped_column(ForeignKey("ovens.id"))
     code: Mapped[str] = mapped_column(String(40), unique=True)
-    start_min: Mapped[int] = mapped_column(Integer)  # minutes from 00:00
+    start_min: Mapped[int] = mapped_column(Integer)  # minutes from 00:00; negative = previous night
+    # -1 when work started the previous night (start may cross 00:00), else 0.
+    start_day_offset: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     status: Mapped[str] = mapped_column(String(20), default="scheduled")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

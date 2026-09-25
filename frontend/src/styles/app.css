@@ -299,3 +299,30 @@ select, input, .gantt-deck button, .toolbar button {
   justify-content: space-between;
   font-family: "IBM Plex Mono", monospace;
 }
+
+/* —— previous-night (overnight) fermentation —— */
+.night-toggle { display: inline-flex; gap: .35rem; align-items: center; color: var(--bake-copper); }
+.hint { color: var(--bake-muted); font-size: .78rem; }
+.tag {
+  display: inline-block; padding: 1px 8px; border-radius: 10px;
+  font-size: .72rem; line-height: 1.5; white-space: nowrap;
+  background: var(--bake-steel); color: var(--bake-muted);
+  border: 1px solid var(--line);
+}
+.tag-night {
+  background: rgba(122, 92, 62, .35);
+  color: var(--bake-copper);
+  border-color: #6b4f34;
+}
+.row-night { box-shadow: inset 3px 0 0 var(--bake-ember); }
+.night-legend {
+  display: flex; gap: .75rem; align-items: center;
+  color: var(--bake-muted); font-size: .78rem; margin-bottom: .75rem;
+}
+.gantt-block.night { outline: 2px dashed rgba(242, 184, 128, .85); outline-offset: -2px; }
+.night-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; margin-right: 3px; border-radius: 50%;
+  background: var(--bake-copper); color: #2a1a0e;
+  font-size: 9px; font-weight: 700; flex: none;
+}
