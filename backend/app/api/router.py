@@ -14,11 +14,17 @@ from app.schemas.schemas import (
     WindowOut,
 )
 from app.services.oven_engine import (
+    DAY_MINUTES,
+    DAY_OPEN,
     Occupancy,
     RecipeDurations,
+    absolute_start,
     build_occupancies,
+    clip_to_day,
     find_conflicts,
+    is_overnight,
     next_free_window,
+    overnight_rejection,
 )
 
 api_router = APIRouter()
@@ -26,6 +32,20 @@ api_router = APIRouter()
 
 def _recipe(p: Product) -> RecipeDurations:
     return RecipeDurations(p.ferment_min, p.bake_min)
+
+
+def _clock_abs(m: int) -> str:
+    """绝对分钟 → 可读时刻，负值落在前一日。"""
+    day, mm = divmod(m, DAY_MINUTES)
+    hh, mi = divmod(mm, 60)
+    prefix = "当日" if day == 0 else "前一日" if day == -1 else f"{day:+d}日"
+    return f"{prefix} {hh:02d}:{mi:02d}"
+
+
+def _auto_code(absolute: int) -> str:
+    if absolute < 0:
+        return f"BO-N{absolute + DAY_MINUTES}"  # 前一日 0 点起的分钟数
+    return f"BO-{absolute}"
 
 
 def _all_occupancies(db: Session) -> list[Occupancy]:
@@ -50,6 +70,7 @@ def _batch_out(db: Session, b: Batch) -> BatchOut:
         oven_id=b.oven_id,
         code=b.code,
         start_min=b.start_min,
+        prev_day=is_overnight(b.start_min),
         status=b.status,
         product_name=p.name if p else None,
         oven_label=o.label if o else None,
@@ -86,10 +107,19 @@ def create_batch(body: BatchCreate, db: Session = Depends(get_db)):
     if not product or not oven:
         raise HTTPException(404, "产品或炉位不存在")
     recipe = _recipe(product)
-    candidates = build_occupancies(oven.id, -1, body.start_min, recipe)
+    start = absolute_start(body.start_min, body.prev_day)
+    code = body.code or _auto_code(start)
+    if overnight_rejection(start, recipe):
+        detail = (
+            f"夜间批次烘烤结束 {_clock_abs(start + recipe.total)} "
+            f"早于当日开门 {_clock_abs(DAY_OPEN)}"
+        )
+        db.add(ConflictLog(batch_code=code, oven_id=oven.id, detail=detail))
+        db.commit()
+        raise HTTPException(409, detail)
+    candidates = build_occupancies(oven.id, -1, start, recipe)
     existing = _all_occupancies(db)
     hits = find_conflicts(existing, candidates)
-    code = body.code or f"BO-{body.start_min}"
     if hits:
         ex, cand = hits[0]
         detail = (
@@ -103,7 +133,7 @@ def create_batch(body: BatchCreate, db: Session = Depends(get_db)):
         product_id=product.id,
         oven_id=oven.id,
         code=code,
-        start_min=body.start_min,
+        start_min=start,
     )
     db.add(batch)
     db.commit()
@@ -119,7 +149,12 @@ def gantt(db: Session = Depends(get_db)):
         o = db.get(Oven, b.oven_id)
         if not p or not o:
             continue
+        overnight = is_overnight(b.start_min)
         for occ in build_occupancies(b.oven_id, b.id, b.start_min, _recipe(p)):
+            # 只画当日 0 点之后仍占着的部分；冲突判定不经过这里
+            visible = clip_to_day(occ.interval)
+            if visible is None:
+                continue
             blocks.append(
                 GanttBlock(
                     batch_id=b.id,
@@ -127,8 +162,9 @@ def gantt(db: Session = Depends(get_db)):
                     oven_id=o.id,
                     oven_label=o.label,
                     phase=occ.phase,
-                    start_min=occ.interval.start,
-                    end_min=occ.interval.end,
+                    start_min=visible.start,
+                    end_min=visible.end,
+                    prev_day=overnight,
                 )
             )
     return blocks

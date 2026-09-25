@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 type P = { id: number; name: string }; type O = { id: number; label: string };
-type B = { id: number; code: string; product_name?: string; oven_label?: string; start_min: number; ferment_end?: number; bake_end?: number; status: string };
+type B = { id: number; code: string; product_name?: string; oven_label?: string; start_min: number; prev_day?: boolean; ferment_end?: number; bake_end?: number; status: string };
 function fmt(m: number) { const h = Math.floor(m/60), mm = m%60; return `${String(h).padStart(2,"0")}:${String(mm).padStart(2,"0")}`; }
+function fmtAbs(m: number) { return m < 0 ? `前一日 ${fmt(m + 1440)}` : fmt(m); }
 export default function BatchesPage() {
   const [products, setProducts] = useState<P[]>([]);
   const [ovens, setOvens] = useState<O[]>([]);
   const [rows, setRows] = useState<B[]>([]);
   const [pid, setPid] = useState<number | "">(""); const [oid, setOid] = useState<number | "">("");
-  const [start, setStart] = useState(11 * 60); const [msg, setMsg] = useState(""); const [err, setErr] = useState("");
+  const [start, setStart] = useState(11 * 60); const [prevDay, setPrevDay] = useState(false);
+  const [msg, setMsg] = useState(""); const [err, setErr] = useState("");
   const reload = () => api<B[]>("/batches").then(setRows);
   useEffect(() => {
     api<P[]>("/products").then(p => { setProducts(p); if (p[0]) setPid(p[0].id); });
@@ -18,7 +20,7 @@ export default function BatchesPage() {
   async function create() {
     setMsg(""); setErr("");
     try {
-      const b = await api<B>("/batches", { method: "POST", body: JSON.stringify({ product_id: pid, oven_id: oid, start_min: start }) });
+      const b = await api<B>("/batches", { method: "POST", body: JSON.stringify({ product_id: pid, oven_id: oid, start_min: start, prev_day: prevDay }) });
       setMsg(`已排产 ${b.code}`);
       reload();
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
@@ -28,14 +30,16 @@ export default function BatchesPage() {
     <div className="toolbar">
       <select value={pid} onChange={e => setPid(Number(e.target.value))}>{products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
       <select value={oid} onChange={e => setOid(Number(e.target.value))}>{ovens.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</select>
-      <label>开工分钟 <input type="number" value={start} onChange={e => setStart(Number(e.target.value))} style={{ width: 90 }} /></label>
+      <label>开工分钟{prevDay ? "（前一日 0 点起）" : "（当日 0 点起）"} <input type="number" value={start} onChange={e => setStart(Number(e.target.value))} style={{ width: 90 }} /></label>
+      <label className="check"><input type="checkbox" checked={prevDay} onChange={e => setPrevDay(e.target.checked)} /> 夜间开工（落在前一日）</label>
       <button onClick={create}>创建生产批次</button>
     </div>
     {msg && <div className="ok">{msg}</div>}
     {err && <div className="err">{err}</div>}
-    <table className="table"><thead><tr><th>批次</th><th>产品</th><th>炉位</th><th>发酵</th><th>烘烤结束</th><th>状态</th></tr></thead>
+    <table className="table"><thead><tr><th>批次</th><th>产品</th><th>炉位</th><th>开工</th><th>发酵</th><th>烘烤结束</th><th>状态</th></tr></thead>
     <tbody>{rows.map(b => <tr key={b.id}><td className="mono">{b.code}</td><td>{b.product_name}</td><td>{b.oven_label}</td>
-      <td className="mono">{fmt(b.start_min)}–{fmt(b.ferment_end ?? b.start_min)}</td>
-      <td className="mono">{fmt(b.bake_end ?? b.start_min)}</td><td>{b.status}</td></tr>)}</tbody></table>
+      <td className="mono">{b.prev_day ? `前一日 ${fmt(b.start_min + 1440)}` : `当日 ${fmt(b.start_min)}`}</td>
+      <td className="mono">{fmtAbs(b.start_min)}–{fmtAbs(b.ferment_end ?? b.start_min)}</td>
+      <td className="mono">{fmtAbs(b.bake_end ?? b.start_min)}</td><td>{b.status}</td></tr>)}</tbody></table>
   </>);
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-type Block = { batch_id: number; code: string; oven_id: number; oven_label: string; phase: string; start_min: number; end_min: number };
+type Block = { batch_id: number; code: string; oven_id: number; oven_label: string; phase: string; start_min: number; end_min: number; prev_day?: boolean };
 const DAY_START = 8 * 60, DAY_END = 18 * 60, SPAN = DAY_END - DAY_START;
 function pct(m: number) { return ((m - DAY_START) / SPAN) * 100; }
 export default function GanttPage() {
@@ -22,13 +22,18 @@ export default function GanttPage() {
         <div className="gantt-row" key={oid}>
           <div>{row.label}</div>
           <div className="gantt-track">
-            {row.blocks.map((b, i) => (
-              <div key={i} className={`gantt-block ${b.phase}`}
-                style={{ left: `${pct(b.start_min)}%`, width: `${((b.end_min - b.start_min) / SPAN) * 100}%` }}
-                title={`${b.code} ${b.phase}`}>
-                {b.code}/{b.phase === "ferment" ? "酵" : "烤"}
-              </div>
-            ))}
+            {row.blocks.flatMap((b, i) => {
+              const s = Math.max(b.start_min, DAY_START);
+              const e = Math.min(b.end_min, DAY_END);
+              if (e <= s) return [];
+              return [(
+                <div key={i} className={`gantt-block ${b.phase}${b.prev_day ? " overnight" : ""}`}
+                  style={{ left: `${pct(s)}%`, width: `${((e - s) / SPAN) * 100}%` }}
+                  title={`${b.code} ${b.phase}${b.prev_day ? "（夜间开工）" : ""}`}>
+                  {b.prev_day ? "夜·" : ""}{b.code}/{b.phase === "ferment" ? "酵" : "烤"}
+                </div>
+              )];
+            })}
           </div>
         </div>
       ))}

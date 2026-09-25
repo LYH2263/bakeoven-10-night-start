@@ -1,6 +1,8 @@
 from datetime import datetime
 from pydantic import BaseModel, Field
 
+from app.services.oven_engine import DAY_MINUTES
+
 
 class ProductOut(BaseModel):
     id: int
@@ -23,6 +25,7 @@ class BatchOut(BaseModel):
     oven_id: int
     code: str
     start_min: int
+    prev_day: bool = False
     status: str
     product_name: str | None = None
     oven_label: str | None = None
@@ -34,7 +37,9 @@ class BatchOut(BaseModel):
 class BatchCreate(BaseModel):
     product_id: int
     oven_id: int
-    start_min: int = Field(ge=0, le=24 * 60 - 1)
+    # 负分钟 = 前一日开工（夜间发酵）；prev_day=True 时按前一日钟表分钟解读
+    start_min: int = Field(ge=-DAY_MINUTES, le=DAY_MINUTES - 1)
+    prev_day: bool = False
     code: str | None = None
 
 
@@ -46,6 +51,7 @@ class GanttBlock(BaseModel):
     phase: str
     start_min: int
     end_min: int
+    prev_day: bool = False
 
 
 class ConflictOut(BaseModel):

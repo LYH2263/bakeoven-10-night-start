@@ -232,6 +232,9 @@ h2 {
   letter-spacing: .04em;
 }
 .toolbar { display: flex; gap: .75rem; flex-wrap: wrap; margin-bottom: 1rem; align-items: center; }
+.toolbar label { display: inline-flex; align-items: center; gap: .35rem; }
+.toolbar .check { font-size: .85rem; color: var(--bake-muted); }
+.toolbar .check input { accent-color: var(--bake-ember); }
 select, input, .gantt-deck button, .toolbar button {
   background: var(--panel); color: var(--text); border: 1px solid var(--line);
   border-radius: 4px; padding: .5rem .75rem; font: inherit;
@@ -285,6 +288,17 @@ select, input, .gantt-deck button, .toolbar button {
   background: var(--bake);
   border: 1px solid #f0a060;
   box-shadow: 0 0 8px rgba(217, 121, 65, .35);
+}
+/* 夜间开工：段从昨夜延续而来，左缘铜色 + 斜纹提示 */
+.gantt-block.overnight {
+  border-left: 3px solid var(--bake-copper);
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255, 244, 232, .16) 0,
+    rgba(255, 244, 232, .16) 4px,
+    transparent 4px,
+    transparent 9px
+  );
 }
 .axis {
   display: grid;
